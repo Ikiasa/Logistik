@@ -26,8 +26,8 @@ export const LoginForm: React.FC = () => {
             login(res.data.accessToken, res.data.user);
             setToast({ message: 'Success! Redirecting...', type: 'success' });
 
-            // Delay for UX
-            setTimeout(() => router.push('/dashboard'), 1000);
+            // Hard redirect ensures cookie is sent with the new page request
+            setTimeout(() => window.location.href = '/dashboard', 1000);
         } catch (err: any) {
             setToast({ message: err.response?.data?.message || 'Login Failed', type: 'error' });
         } finally {
