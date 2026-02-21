@@ -18,9 +18,10 @@ const mockInventory: InventoryItem[] = [
         sku: 'SKU-LOG-001',
         name: 'Heavy Duty Pallet',
         category: 'Storage',
-        location: { rack: 'A-102', bin: 'B-05' },
+        location: { zone: 'A', rack: 'A-102', bin: 'B-05' },
         quantity: 150,
         threshold: 20,
+        reorderPoint: 30,
         unit: 'pcs',
         status: 'IN_STOCK',
         lastRestockedAt: new Date().toISOString()
@@ -30,9 +31,10 @@ const mockInventory: InventoryItem[] = [
         sku: 'SKU-PKG-042',
         name: 'Wrapping Film 50cm',
         category: 'Packaging',
-        location: { rack: 'B-201', bin: 'C-12' },
+        location: { zone: 'B', rack: 'B-201', bin: 'C-12' },
         quantity: 8,
         threshold: 15,
+        reorderPoint: 20,
         unit: 'rolls',
         status: 'LOW_STOCK',
         lastRestockedAt: new Date().toISOString()
@@ -42,9 +44,10 @@ const mockInventory: InventoryItem[] = [
         sku: 'SKU-SF-099',
         name: 'Forklift Spare Tire',
         category: 'Maintenance',
-        location: { rack: 'M-500', bin: 'A-01' },
+        location: { zone: 'M', rack: 'M-500', bin: 'A-01' },
         quantity: 0,
         threshold: 2,
+        reorderPoint: 3,
         unit: 'pcs',
         status: 'OUT_OF_STOCK',
         lastRestockedAt: new Date().toISOString()
@@ -87,8 +90,8 @@ export const InventoryTable: React.FC = () => {
                     accessor: (item) => (
                         <div className="flex items-center space-x-3">
                             <span className={`px-2 py-1 rounded-md text-[10px] font-black tracking-widest uppercase border ${item.quantity < 20
-                                    ? 'bg-red-500/10 text-red-500 border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.1)]'
-                                    : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
+                                ? 'bg-red-500/10 text-red-500 border-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.1)]'
+                                : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
                                 }`}>
                                 {item.quantity} {item.unit}
                             </span>

@@ -38,7 +38,7 @@ export const VehicleProfitability: React.FC<Props> = ({ vehicleId, startDate, en
         return <div className="p-4">No profitability data available</div>;
     }
 
-    const isProfit able = profitability.netMargin > 0;
+    const isProfitable = profitability.netMargin > 0;
 
     return (
         <div className="bg-white rounded-lg shadow p-6">
