@@ -5,7 +5,7 @@ import { useAuthStore } from '@/store/authStore';
 import Cookies from 'js-cookie';
 
 const api = axios.create({
-    baseURL: process.env.NEXT_PUBLIC_API_URL, // Use environment variable
+    baseURL: process.env.NEXT_PUBLIC_API_URL || '/api', // Vercel: relative path
     headers: {
         'Content-Type': 'application/json',
     },
