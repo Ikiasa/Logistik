@@ -91,38 +91,41 @@ export const MarginTrendChart: React.FC = () => {
 
 export const CostBreakdownChart: React.FC = () => {
     return (
-        <div className="h-[300px] w-full bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm">
-            <h3 className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-[0.2em] mb-6">Cost_Distribution</h3>
-            <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={costData} layout="vertical" margin={{ left: -20 }}>
-                    <XAxis type="number" hide />
-                    <YAxis
-                        dataKey="name"
-                        type="category"
-                        stroke="#888"
-                        fontSize={10}
-                        axisLine={false}
-                        tickLine={false}
-                    />
-                    <Tooltip
-                        cursor={{ fill: 'currentColor', className: 'text-zinc-100 dark:text-zinc-800', opacity: 0.1 } as any}
-                        contentStyle={{
-                            backgroundColor: 'var(--tooltip-bg, #fff)',
-                            border: '1px solid var(--tooltip-border, #f4f4f5)',
-                            borderRadius: '12px',
-                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'
-                        }}
-                        itemStyle={{ color: 'var(--tooltip-text, #18181b)', fontSize: '10px', fontWeight: 'bold' }}
-                        labelStyle={{ color: 'var(--tooltip-text, #18181b)', fontWeight: 'black' }}
-                        wrapperClassName="dark:[--tooltip-bg:#09090b] dark:[--tooltip-border:#27272a] dark:[--tooltip-text:#fff]"
-                    />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
-                        {costData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                    </Bar>
-                </BarChart>
-            </ResponsiveContainer>
+        <div className="w-full bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 shadow-sm">
+            <h3 className="text-[10px] font-black text-zinc-400 dark:text-zinc-600 uppercase tracking-[0.2em] mb-4">Cost_Distribution</h3>
+            <div className="h-[240px]">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={costData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                        <XAxis type="number" hide />
+                        <YAxis
+                            dataKey="name"
+                            type="category"
+                            stroke="#888"
+                            fontSize={11}
+                            width={55}
+                            axisLine={false}
+                            tickLine={false}
+                        />
+                        <Tooltip
+                            cursor={{ fill: 'currentColor', className: 'text-zinc-100 dark:text-zinc-800', opacity: 0.1 } as any}
+                            contentStyle={{
+                                backgroundColor: 'var(--tooltip-bg, #fff)',
+                                border: '1px solid var(--tooltip-border, #f4f4f5)',
+                                borderRadius: '12px',
+                                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'
+                            }}
+                            itemStyle={{ color: 'var(--tooltip-text, #18181b)', fontSize: '10px', fontWeight: 'bold' }}
+                            labelStyle={{ color: 'var(--tooltip-text, #18181b)', fontWeight: 'black' }}
+                            wrapperClassName="dark:[--tooltip-bg:#09090b] dark:[--tooltip-border:#27272a] dark:[--tooltip-text:#fff]"
+                        />
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
+                            {costData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
         </div>
     );
 };
