@@ -96,7 +96,7 @@ export const CostAnomalyAlerts: React.FC<Props> = ({ startDate, endDate }) => {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="text-center p-3 bg-red-50 rounded">
                         <div className="text-2xl font-bold text-red-600">{anomalies.cost.length}</div>
-                        <div className="text-sm text-gray-600">Cost > Revenue</div>
+                        <div className="text-sm text-gray-600">Cost {'>'} Revenue</div>
                     </div>
                     <div className="text-center p-3 bg-yellow-50 rounded">
                         <div className="text-2xl font-bold text-yellow-600">{anomalies.fuel.length}</div>
