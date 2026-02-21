@@ -45,6 +45,155 @@ ON CONFLICT (id) DO NOTHING;
 
 COMMIT;
 
+-- Migration: 001_address_normalization_schema
+-- Description: Sets up geo_regions, partitioned addresses table, overrides, and order modifications.
+-- Author: Logistik Architect
+-- Date: 2026-02-14
+
+-- 1. Enable PostGIS Extension
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- 2. Reference Data: Geo Regions (Administrative Boundaries)
+CREATE TABLE IF NOT EXISTS geo_regions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    country_code CHAR(2) NOT NULL, -- ISO 3166-1 alpha-2
+    state_province VARCHAR(100),
+    city VARCHAR(100),
+    postal_code VARCHAR(20),
+    boundary GEOGRAPHY(POLYGON),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_geo_regions_lookup ON geo_regions (country_code, postal_code, city);
+CREATE INDEX IF NOT EXISTS idx_geo_regions_boundary ON geo_regions USING GIST (boundary);
+
+-- 3. Master Data: Addresses (Partitioned by Country)
+CREATE TABLE IF NOT EXISTS addresses (
+    id UUID DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    hash CHAR(64) NOT NULL, -- SHA-256 deduplication
+    
+    -- Structured Address Components
+    structured_data JSONB NOT NULL,
+    formatted_address TEXT NOT NULL,
+    
+    -- Geospatial Data
+    location GEOGRAPHY(POINT),
+    
+    -- Validation Metadata
+    -- Switch to CHECK constraint for easier future expansion
+    validation_status VARCHAR(50) NOT NULL CHECK (validation_status IN ('unverified', 'verified_interpolated', 'verified_rooftop', 'failed')),
+    last_validated_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Region Partitioning Key
+    country_code CHAR(2) NOT NULL,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Constraints & Keys
+    -- Partitioning requires partition key in PK
+    PRIMARY KEY (id, country_code)
+) PARTITION BY LIST (country_code);
+
+-- 3.1 Partitions
+CREATE TABLE IF NOT EXISTS addresses_default PARTITION OF addresses DEFAULT;
+CREATE TABLE IF NOT EXISTS addresses_us PARTITION OF addresses FOR VALUES IN ('US');
+CREATE TABLE IF NOT EXISTS addresses_de PARTITION OF addresses FOR VALUES IN ('DE');
+
+-- 3.2 Indexes (Propagated automatically in PG 11+)
+CREATE INDEX IF NOT EXISTS idx_addresses_tenant ON addresses (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_addresses_hash ON addresses (hash);
+CREATE INDEX IF NOT EXISTS idx_addresses_location ON addresses USING GIST (location);
+CREATE INDEX IF NOT EXISTS idx_addresses_region_lookup ON addresses (country_code, (structured_data->>'postal_code'), (structured_data->>'city'));
+
+-- 4. Audit: Address Overrides
+CREATE TABLE IF NOT EXISTS address_overrides (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL, 
+    
+    -- Link to Address (Logical due to partitioning)
+    address_id UUID NOT NULL,
+    
+    -- User Action Tracking
+    overridden_by UUID NOT NULL, -- FK to users table (logical or explicit depending on user architecture)
+    
+    -- Override Details
+    override_reason_code VARCHAR(50) NOT NULL, -- e.g., 'NEW_CONSTRUCTION'
+    justification_note TEXT,
+    
+    -- State Transition Logging
+    previous_validation_status VARCHAR(50),
+    new_validation_status VARCHAR(50),
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_address_overrides_address ON address_overrides (address_id);
+CREATE INDEX IF NOT EXISTS idx_address_overrides_user ON address_overrides (overridden_by);
+CREATE INDEX IF NOT EXISTS idx_address_overrides_tenant ON address_overrides (tenant_id);
+
+-- 4.5 Update Orders with Address Tracking
+ALTER TABLE orders 
+    ADD COLUMN IF NOT EXISTS delivery_address_id UUID,
+    ADD COLUMN IF NOT EXISTS delivery_address_country_code CHAR(2),
+    ADD COLUMN IF NOT EXISTS delivery_address_snapshot JSONB,
+    ADD COLUMN IF NOT EXISTS legacy_address_text TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_orders_delivery_address ON orders(delivery_address_id);
+
+-- 5. Helper Functions (Optional)
+-- Ensure consistency of country code
+CREATE OR REPLACE FUNCTION check_partition_bounds() RETURNS TRIGGER AS $$
+BEGIN
+    -- Logic to ensure country_code matches partition can be added here if needed
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Migration: 002_address_hardening
+-- Description: Enforces DB-level Uniqueness on Master Addresses and Immutability on Order Snapshots.
+-- Author: Logistik Architect
+-- Date: 2026-02-14
+
+-- 1. Enforce Master Address Uniqueness (Concurrency Safety)
+-- Prevents duplicate master records for the same hash + tenant within a partition.
+-- Note: Check constraint on 'validation_status' was added in 001.
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_addresses_hash_tenant_country') THEN
+        ALTER TABLE addresses
+            ADD CONSTRAINT uq_addresses_hash_tenant_country 
+            UNIQUE (hash, tenant_id, country_code);
+    END IF;
+END $$;
+
+-- 2. Enforce Snapshot Immutability (Legal Integrity)
+-- Prevent updates to 'delivery_address_snapshot' once Order is beyond 'PENDING' stage.
+
+CREATE OR REPLACE FUNCTION protect_order_snapshot()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Allow updates only if Status is PENDING or DRAFT
+    IF OLD.status NOT IN ('PENDING', 'DRAFT') THEN
+        IF OLD.delivery_address_snapshot IS DISTINCT FROM NEW.delivery_address_snapshot THEN
+            RAISE EXCEPTION 'Legal Integrity Violation: Cannot modify delivery_address_snapshot for Order % in status %', OLD.id, OLD.status;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_protect_order_snapshot ON orders;
+CREATE TRIGGER trg_protect_order_snapshot
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION protect_order_snapshot();
+
+-- 3. Add Deprecation Headers Support (Optional DB metadata or just App Layer)
+-- (No DB change needed for headers, strictly App Layer)
+
 -- Migration: 003_financial_integrity_schema
 -- Description: Implements Money Pattern with BIGINT storage, Currency Isolation, and Immutable Ledger.
 -- Author: Logistik Architect
@@ -549,6 +698,43 @@ ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 
 COMMIT;
 
+-- Migration: Create vehicle_tracking table with RLS
+-- Date: 2026-02-15
+
+CREATE TABLE IF NOT EXISTS vehicle_tracking (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    vehicle_id UUID NOT NULL,
+    latitude DECIMAL(10, 6) NOT NULL,
+    longitude DECIMAL(10, 6) NOT NULL,
+    speed INTEGER NOT NULL, -- Speed in km/h
+    heading INTEGER NOT NULL, -- Heading in degrees (0-359)
+    metadata JSONB DEFAULT '{}'::jsonb,
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Enable RLS
+ALTER TABLE vehicle_tracking ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS Policy for Tenant Isolation
+DROP POLICY IF EXISTS tenant_isolation_tracking ON vehicle_tracking;
+CREATE POLICY tenant_isolation_tracking ON vehicle_tracking
+    FOR ALL
+    TO authenticated
+    USING (tenant_id = (current_setting('app.current_tenant_id', true)::uuid)); -- Added true to current_setting
+
+-- Indices for performance
+CREATE INDEX IF NOT EXISTS idx_tracking_vehicle_id ON vehicle_tracking(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_tracking_recorded_at ON vehicle_tracking(recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tracking_tenant_id ON vehicle_tracking(tenant_id);
+
+-- Create history view for last 24h
+CREATE OR REPLACE VIEW vehicle_last_location AS
+SELECT DISTINCT ON (vehicle_id) *
+FROM vehicle_tracking
+ORDER BY vehicle_id, recorded_at DESC;
+
 -- Migration: 009_command_center_intelligence
 -- Description: Enables PostGIS and implements Geofencing, Incident tracking, and ETA support.
 -- Author: Logistik Architect
@@ -695,42 +881,63 @@ ON CONFLICT (email) DO UPDATE SET role = EXCLUDED.role;
 
 COMMIT;
 
--- Migration: Create vehicle_tracking table with RLS
--- Date: 2026-02-15
-
-CREATE TABLE IF NOT EXISTS vehicle_tracking (
+-- Vehicles Table
+CREATE TABLE IF NOT EXISTS vehicles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
-    vehicle_id UUID NOT NULL,
-    latitude DECIMAL(10, 6) NOT NULL,
-    longitude DECIMAL(10, 6) NOT NULL,
-    speed INTEGER NOT NULL, -- Speed in km/h
-    heading INTEGER NOT NULL, -- Heading in degrees (0-359)
-    metadata JSONB DEFAULT '{}'::jsonb,
-    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    plate_number VARCHAR(20),
+    type VARCHAR(50),
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Enable RLS
+-- Drivers Table
+CREATE TABLE IF NOT EXISTS drivers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    name VARCHAR(100),
+    phone VARCHAR(20),
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Vehicle Tracking Table (Optimized for time-series)
+CREATE TABLE IF NOT EXISTS vehicle_tracking (
+    id BIGSERIAL PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    vehicle_id UUID NOT NULL,
+    driver_id UUID NOT NULL,
+    latitude DECIMAL(10,8),
+    longitude DECIMAL(11,8),
+    speed DECIMAL(5,2),
+    heading INT,
+    accuracy INT,
+    status VARCHAR(20),
+    recorded_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Performance Indexes
+CREATE INDEX IF NOT EXISTS idx_tracking_vehicle_time ON vehicle_tracking(vehicle_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tracking_tenant_time ON vehicle_tracking(tenant_id, recorded_at DESC);
+
+-- Multi-Tenant Isolation (RLS)
 ALTER TABLE vehicle_tracking ENABLE ROW LEVEL SECURITY;
 
--- Create RLS Policy for Tenant Isolation
-DROP POLICY IF EXISTS tenant_isolation_tracking ON vehicle_tracking;
-CREATE POLICY tenant_isolation_tracking ON vehicle_tracking
-    FOR ALL
-    TO authenticated
-    USING (tenant_id = (current_setting('app.current_tenant_id', true)::uuid)); -- Added true to current_setting
+DROP POLICY IF EXISTS tenant_isolation ON vehicle_tracking;
+CREATE POLICY tenant_isolation ON vehicle_tracking
+USING (tenant_id = current_setting('app.current_tenant', true)::UUID);
 
--- Indices for performance
-CREATE INDEX IF NOT EXISTS idx_tracking_vehicle_id ON vehicle_tracking(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_tracking_recorded_at ON vehicle_tracking(recorded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tracking_tenant_id ON vehicle_tracking(tenant_id);
+-- Seed Initial Dummy Data
+INSERT INTO vehicles (id, tenant_id, plate_number, type)
+VALUES 
+('11111111-2222-3333-4444-555555555551', '11111111-1111-1111-1111-111111111111', 'B 1234 TRK', 'Truck'),
+('11111111-2222-3333-4444-555555555552', '11111111-1111-1111-1111-111111111111', 'B 5678 VAN', 'Van')
+ON CONFLICT (id) DO NOTHING;
 
--- Create history view for last 24h
-CREATE OR REPLACE VIEW vehicle_last_location AS
-SELECT DISTINCT ON (vehicle_id) *
-FROM vehicle_tracking
-ORDER BY vehicle_id, recorded_at DESC;
+INSERT INTO drivers (id, tenant_id, name, phone)
+VALUES
+('21111111-2222-3333-4444-555555555551', '11111111-1111-1111-1111-111111111111', 'Ahmad Saputra', '081234567890'),
+('21111111-2222-3333-4444-555555555552', '11111111-1111-1111-1111-111111111111', 'Budi Santoso', '081298765432')
+ON CONFLICT (id) DO NOTHING;
 
 -- Fuel Logs
 CREATE TABLE IF NOT EXISTS fuel_logs (
@@ -782,4 +989,104 @@ CREATE INDEX IF NOT EXISTS idx_expenses_shipment ON op_expenses(shipment_id);
 ALTER TABLE fuel_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE maintenance_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE op_expenses ENABLE ROW LEVEL SECURITY;
+
+-- RLS Policies for Cost Control Tables
+-- Ensures multi-tenant data isolation
+
+-- Fuel Logs Policies
+DROP POLICY IF EXISTS fuel_logs_tenant_isolation ON fuel_logs;
+CREATE POLICY fuel_logs_tenant_isolation ON fuel_logs
+  FOR ALL
+  USING (tenant_id = current_setting('app.current_tenant', true)::uuid);
+
+-- Maintenance Logs Policies  
+DROP POLICY IF EXISTS maintenance_logs_tenant_isolation ON maintenance_logs;
+CREATE POLICY maintenance_logs_tenant_isolation ON maintenance_logs
+  FOR ALL
+  USING (tenant_id = current_setting('app.current_tenant', true)::uuid);
+
+-- Operational Expenses Policies
+DROP POLICY IF EXISTS op_expenses_tenant_isolation ON op_expenses;
+CREATE POLICY op_expenses_tenant_isolation ON op_expenses
+  FOR ALL
+  USING (tenant_id = current_setting('app.current_tenant', true)::uuid);
+
+-- Additional indexes for performance optimization
+CREATE INDEX IF NOT EXISTS idx_fuel_tenant_date ON fuel_logs(tenant_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_maintenance_tenant_date ON maintenance_logs(tenant_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_tenant_date ON op_expenses(tenant_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_expenses_vehicle ON op_expenses(vehicle_id, recorded_at DESC);
+
+-- Composite index for common profitability queries
+CREATE INDEX IF NOT EXISTS idx_fuel_vehicle_date ON fuel_logs(vehicle_id, recorded_at DESC, tenant_id);
+CREATE INDEX IF NOT EXISTS idx_maintenance_vehicle_date ON maintenance_logs(vehicle_id, recorded_at DESC, tenant_id);
+
+-- Digital Shift Logs
+CREATE TABLE IF NOT EXISTS shift_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    driver_id UUID NOT NULL,
+    vehicle_id UUID NOT NULL,
+    start_at TIMESTAMP DEFAULT NOW(),
+    end_at TIMESTAMP,
+    start_odometer DECIMAL(10,2),
+    end_odometer DECIMAL(10,2),
+    status VARCHAR(20) DEFAULT 'ACTIVE', -- ACTIVE, COMPLETED
+    checklist_data JSONB DEFAULT '{}'
+);
+
+-- Vehicle Inspections
+CREATE TABLE IF NOT EXISTS vehicle_inspections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    vehicle_id UUID NOT NULL,
+    driver_id UUID NOT NULL,
+    inspection_type VARCHAR(20), -- PRE_TRIP, POST_TRIP
+    recorded_at TIMESTAMP DEFAULT NOW(),
+    items JSONB NOT NULL,
+    has_issues BOOLEAN DEFAULT FALSE,
+    issue_details TEXT
+);
+
+-- Incident Reporting
+CREATE TABLE IF NOT EXISTS incidents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    vehicle_id UUID NOT NULL,
+    driver_id UUID NOT NULL,
+    type VARCHAR(50), -- ACCIDENT, BREAKDOWN, FUEL_THEFT, OTHER
+    severity VARCHAR(20), -- LOW, MEDIUM, HIGH, CRITICAL
+    description TEXT,
+    location_lat DECIMAL(10,8),
+    location_lng DECIMAL(11,8),
+    recorded_at TIMESTAMP DEFAULT NOW(),
+    status VARCHAR(20) DEFAULT 'OPEN',
+    photos TEXT[]
+);
+
+-- Delivery Verification (Digital POD)
+CREATE TABLE IF NOT EXISTS delivery_verifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    shipment_id UUID NOT NULL,
+    driver_id UUID NOT NULL,
+    verified_at TIMESTAMP DEFAULT NOW(),
+    recipient_name VARCHAR(100),
+    recipient_signature TEXT, -- Base64 or URL
+    photo_evidence TEXT[],
+    location_lat DECIMAL(10,8),
+    location_lng DECIMAL(11,8),
+    notes TEXT
+);
+
+-- Multi-tenant isolation for all new tables
+ALTER TABLE shift_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE vehicle_inspections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE incidents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE delivery_verifications ENABLE ROW LEVEL SECURITY;
+
+-- Indexing for lookup performance
+CREATE INDEX IF NOT EXISTS idx_shift_driver ON shift_logs(driver_id, status);
+CREATE INDEX IF NOT EXISTS idx_inspections_vehicle ON vehicle_inspections(vehicle_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_delivery_shipment ON delivery_verifications(shipment_id);
 
