@@ -1,0 +1,20 @@
+services:
+  logistik-db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: logistik-db
+    environment:
+      POSTGRES_DB: logistik_db
+      POSTGRES_USER: logistik_user
+      POSTGRES_PASSWORD: secure_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - logistik_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U logistik_user -d logistik_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  logistik_db_data:

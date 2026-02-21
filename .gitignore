@@ -1,0 +1,42 @@
+# dependencies
+/node_modules
+/web/node_modules
+
+# build
+/dist
+/web/.next
+/web/out
+/web/build
+*.tsbuildinfo
+next-env.d.ts
+
+# env
+.env
+.env.*
+/web/.env
+/web/.env.*
+
+# debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# misc
+.DS_Store
+.vscode
+.idea
+*.pem
+/storage
+/output.log
+/output.txt
+/server_output.log
+/server_debug.log
+/diagnostic_output.txt
+/fix_output.txt
+/sim_output.txt
+/tsc_output.log
+/build_output.log
+/debug_db_full.json
+/root_test.txt
+/test_env.txt

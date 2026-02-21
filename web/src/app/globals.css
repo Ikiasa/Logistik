@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* Tactical Palette */
+  --tactical-green: #00ff41;
+  --tactical-amber: #ffb000;
+  --tactical-red: #ff0000;
+  --tactical-bg: #0a0b10;
+  --tactical-bg-panel: #11141d;
+  --tactical-border: #1e2532;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-outfit);
+  --font-mono: var(--font-geist-mono);
+
+  --color-tactical-green: var(--tactical-green);
+  --color-tactical-amber: var(--tactical-amber);
+  --color-tactical-red: var(--tactical-red);
+  --color-tactical-bg: var(--tactical-bg);
+  --color-tactical-panel: var(--tactical-bg-panel);
+}
+
+/* Support for next-themes class-based toggling */
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Tactical Utilities */
+.tactical-border-glow {
+  border: 1px solid var(--tactical-border);
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.05);
+}
+
+.tactical-text-glow {
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.5);
+}
+
+.tactical-grid-overlay {
+  background-image:
+    linear-gradient(rgba(30, 37, 50, 0.2) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 37, 50, 0.2) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+@keyframes tactical-pulse {
+  0% {
+    opacity: 0.4;
+    box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+  }
+
+  70% {
+    opacity: 1;
+    box-shadow: 0 0 0 10px rgba(255, 0, 0, 0);
+  }
+
+  100% {
+    opacity: 0.4;
+    box-shadow: 0 0 0 0 rgba(255, 0, 0, 0);
+  }
+}
+
+.animate-tactical-red {
+  animation: tactical-pulse 2s infinite;
+}
